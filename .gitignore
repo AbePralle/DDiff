@@ -1,0 +1,7 @@
+*.swp
+Build
+.rogo
+.DS_Store
+
+# Windows
+*.obj

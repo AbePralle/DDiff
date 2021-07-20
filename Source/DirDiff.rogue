@@ -1,0 +1,177 @@
+#================================================================================
+# DirDiff.rogue
+# July 18, 2021
+#================================================================================
+$define VERSION "1.0"
+$define DATE    "July 19, 2021"
+$define ABOUT   "DirDiff v$\n$ by Abe Pralle" (VERSION,DATE)
+
+$requireRogue "1.8.3"
+
+uses Utility/CommandLineParser
+
+try
+  DirDiff( System.command_line_arguments )
+catch (error:Error)
+  local w = Console.width.or_smaller( 80 )
+  Console.error.println "="*w
+  Console.error.println "ERROR"
+  Console.error.println error->String.word_wrapped(w-2).indented(2)
+  Console.error.println "="*w
+  System.exit 1
+endTry
+
+class DirDiff
+  METHODS
+    method init( args:String[] )
+      local command = parse_args( args )
+
+      # 'command' has //options and possibly //args
+      if (command//args.count != 2 or command//options//help)
+        print_usage
+        System.exit 0
+      endIf
+
+      local ignore_hidden = not command//options//hidden->Logical
+
+      local folder_a = File.ensure_ends_with_separator( File.absolute_filepath(command//args[0]->String) )
+      local folder_b = File.ensure_ends_with_separator( File.absolute_filepath(command//args[1]->String) )
+      local listing_a = RelativeFile[]
+      local listing_b = RelativeFile[]
+      local list_a = File.listing( folder_a, "**", &omit_path, &=ignore_hidden )
+      local list_b = File.listing( folder_b, "**", &omit_path, &=ignore_hidden )
+      listing_a.add( RelativeFile(folder_a,forEach in list_a) )
+      listing_b.add( RelativeFile(folder_b,forEach in list_b) )
+
+      if (not command//options//expand)
+        while (remove_differing_subtrees(listing_a,listing_b)) noAction
+        while (remove_differing_subtrees(listing_b,listing_a)) noAction
+      endIf
+
+      local unique_a = Set<<RelativeFile>>()
+      unique_a.add( forEach in listing_a )
+
+      local unique_b = Set<<RelativeFile>>()
+      unique_b.add( forEach in listing_b )
+
+      local common = Set<<RelativeFile>>()
+      consolidate_common_files( listing_a, unique_a, unique_b, common )
+
+      local all = RelativeFile[]
+      forEach (c in common)
+        local filepath = c.relative_filepath
+        if (not c.is_folder and File.is_different_than(folder_a+filepath,folder_b+filepath))
+          c.status = " * "
+          all.add( c )
+        endIf
+      endForEach
+
+      all.add( (forEach in unique_a).[status="<  "] )
+      all.add( (forEach in unique_b).[status="  >"] )
+
+      all.sort( (a,b) => (a.relative_filepath <= b.relative_filepath) )
+
+      println (forEach in all)
+
+    method remove_differing_subtrees( a:RelativeFile[], b:RelativeFile[] )->Logical
+      forEach (file in a)
+        if (file.is_folder)
+          if (not b.contains(file))
+            # B does not contain any of the nested files & folders. Remove them from A
+            # so that only the top-level differing folder shows up.
+            local remove_pattern = "$/**" (file.relative_filepath)
+            local removed_any = false
+            forEach (f2 in rewriter=a.rewriter)
+              if (File.matches_wildcard_pattern(f2.relative_filepath,remove_pattern))
+                removed_any = true
+              else
+                rewriter.write( f2 )
+              endIf
+            endForEach
+            if (removed_any) return true
+          endIf
+        endIf
+      endForEach
+      return false
+
+    method consolidate_common_files(
+        a:RelativeFile[],
+        unique_a:Set<<RelativeFile>>, unique_b:Set<<RelativeFile>>,
+        common:Set<<RelativeFile>> )
+      forEach (f in a)
+        if (unique_b.contains(f))
+          unique_a.remove( f )
+          unique_b.remove( f )
+          common.add( f )
+        endIf
+      endForEach
+
+      local b = unique_b._t.keys.to_list
+
+      forEach (f in b)
+        if (unique_a.contains(f))
+          unique_a.remove( f )
+          unique_b.remove( f )
+          common.add( f )
+        endIf
+      endForEach
+
+    method parse_args( args:String[] )->Value
+      local command = CommandLineParser().
+      [
+         option( "--hidden", &alias="-a" )
+         option( "--help",   &aliases=["-h","-?"] )
+         option( "--expand", &alias="-e" )
+      ].parse( args )
+      return command
+
+    method print_usage
+      println ABOUT
+      println
+      println @|USAGE
+               |  dirdiff [OPTIONS] <Folder-A> <Folder-B>
+               |
+               |OPTIONS
+               |  --hidden, -a
+               |    Show hidden files that begin with '.'.
+               |
+               |  --help, -h, -?
+               |    Show this help text.
+               |
+               |  --expand, -e
+               |    Show full contents of nested folders that only exist on one path.
+               |
+               |OUTPUT
+               |  <   (Filename) - A file that is Folder A but not Folder B.
+               |    > (Filename) - A file that is Folder B but not Folder A.
+               |   *  (Filename) - A file that is in both folders but is not the same in both.
+
+endClass
+
+class RelativeFile( folder:String, relative_filepath:String, absolute_filepath:String )
+  PROPERTIES
+    status : String
+
+  METHODS
+    method init( folder, relative_filepath )
+      folder = File.ensure_ends_with_separator( folder )
+      absolute_filepath = folder + relative_filepath
+      if (is_folder)
+        relative_filepath = File.ensure_ends_with_separator( relative_filepath )
+        absolute_filepath = File.ensure_ends_with_separator( absolute_filepath )
+      endIf
+
+    method hash_code->Int32
+      return relative_filepath.hash_code
+
+    method is_folder->Logical
+      return File.is_folder( absolute_filepath )
+
+    method operator==( other:RelativeFile )->Logical
+      return relative_filepath == other.relative_filepath
+
+    method to->String
+      if (not status) return relative_filepath
+      return "$ $" (status,relative_filepath)
+endClass
+
