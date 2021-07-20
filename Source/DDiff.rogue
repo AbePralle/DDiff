@@ -1,17 +1,17 @@
 #================================================================================
-# DirDiff.rogue
+# DDiff.rogue
 # July 18, 2021
 #================================================================================
-$define VERSION "1.0"
+$define VERSION "1.1"
 $define DATE    "July 19, 2021"
-$define ABOUT   "DirDiff v$\n$ by Abe Pralle" (VERSION,DATE)
+$define ABOUT   "DDiff v$\n$ by Abe Pralle" (VERSION,DATE)
 
 $requireRogue "1.8.3"
 
 uses Utility/CommandLineParser
 
 try
-  DirDiff( System.command_line_arguments )
+  DDiff( System.command_line_arguments )
 catch (error:Error)
   local w = Console.width.or_smaller( 80 )
   Console.error.println "="*w
@@ -21,7 +21,7 @@ catch (error:Error)
   System.exit 1
 endTry
 
-class DirDiff
+class DDiff
   METHODS
     method init( args:String[] )
       local command = parse_args( args )
@@ -66,8 +66,13 @@ class DirDiff
         endIf
       endForEach
 
-      all.add( (forEach in unique_a).[status="<  "] )
-      all.add( (forEach in unique_b).[status="  >"] )
+      if (command//options//left or not command//options//right)
+        all.add( (forEach in unique_a).[status="<  "] )
+      endIf
+
+      if (command//options//right or not command//options//left)
+        all.add( (forEach in unique_b).[status="  >"] )
+      endIf
 
       all.sort( (a,b) => (a.relative_filepath <= b.relative_filepath) )
 
@@ -79,7 +84,7 @@ class DirDiff
           if (not b.contains(file))
             # B does not contain any of the nested files & folders. Remove them from A
             # so that only the top-level differing folder shows up.
-            local remove_pattern = "$/**" (file.relative_filepath)
+            local remove_pattern = "$?**" (File.ensure_ends_with_separator(file.relative_filepath))
             local removed_any = false
             forEach (f2 in rewriter=a.rewriter)
               if (File.matches_wildcard_pattern(f2.relative_filepath,remove_pattern))
@@ -119,9 +124,11 @@ class DirDiff
     method parse_args( args:String[] )->Value
       local command = CommandLineParser().
       [
+         option( "--expand", &alias="-e" )
          option( "--hidden", &alias="-a" )
          option( "--help",   &aliases=["-h","-?"] )
-         option( "--expand", &alias="-e" )
+         option( "--left",   &alias="-l" )
+         option( "--right",  &alias="-r" )
       ].parse( args )
       return command
 
@@ -129,22 +136,31 @@ class DirDiff
       println ABOUT
       println
       println @|USAGE
-               |  dirdiff [OPTIONS] <Folder-A> <Folder-B>
+               |  ddiff [OPTIONS] <left-folder> <right-folder>
                |
                |OPTIONS
+               |  --expand, -e
+               |    Show full contents of nested folders that only exist on one path.
+               |
                |  --hidden, -a
                |    Show hidden files that begin with '.'.
                |
                |  --help, -h, -?
                |    Show this help text.
                |
-               |  --expand, -e
-               |    Show full contents of nested folders that only exist on one path.
+               |  --left, -l
+               |    Show files that are unique or different in the left folder. If neither
+               |    --left nor --right are specified then differences in both folders are shown.
+               |
+               |  --right, -r
+               |    Show files that are unique or different in the right folder. If neither
+               |    --left nor --right are specified then differences in both folders are shown.
                |
                |OUTPUT
-               |  <   (Filename) - A file that is Folder A but not Folder B.
-               |    > (Filename) - A file that is Folder B but not Folder A.
-               |   *  (Filename) - A file that is in both folders but is not the same in both.
+               |  <   (Filename) - A file that is in the left folder but not the right folder.
+               |    > (Filename) - A file that is in the right folder but not the left folder.
+               |   *  (Filename) - A file that is in both folders but has differing content.
+               |
 
 endClass
 
